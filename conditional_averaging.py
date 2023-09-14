@@ -136,11 +136,11 @@ def cond_av(S, T, smin=None, smax=None, Sref=None, prominence=None, delta=None, 
     # Taking equally sized signal excerpts around every peak and storing them in an array.
     for i, global_peak_loc in enumerate(gpl_array):
 
-        # Find the average values and their variance
+        # Setting up an array of all the signal values around the conditional events.
         low_ind = int(max(0, global_peak_loc - t_half_len))
         high_ind = int(min(len(sgnl), global_peak_loc + t_half_len + 1))
         tmp_sn = S[low_ind:high_ind].copy()
-        
+             
         if low_ind == 0:
             tmp_sn = np.append(np.zeros(-int(global_peak_loc) + t_half_len), tmp_sn)
         if high_ind == len(S):
@@ -150,12 +150,24 @@ def cond_av(S, T, smin=None, smax=None, Sref=None, prominence=None, delta=None, 
             
         # If discard_small=True only peak values which are the max value within one delta of
         # the peak location are included in the average.
-        if tmp_sn.max() != tmp_sn[t_half_len]:
-            if discard_small:
+        if discard_small:
+            # Making and checking a window within the reference signal to see if the the peak
+            # is the local maximum
+            tmp_snref = sgnl[low_ind:high_ind].copy()
+            
+            if low_ind == 0:
+                tmp_snref = np.append(np.zeros(-int(global_peak_loc) + t_half_len), tmp_snref)
+            if high_ind == len(S):
+                tmp_snref = np.append(
+                    tmp_snref, np.zeros(int(global_peak_loc) + t_half_len + 1 - len(S))
+                )
+                
+            if tmp_snref.max() != tmp_snref[t_half_len]:
+            
                 tmp_sn[:] = np.nan
                 gpl_array[i] = np.nan
             
-            badcount += 1
+                badcount += 1
         
         if not np.isnan(gpl_array[i]):
             Svals[low_ind:high_ind] = S[low_ind:high_ind].copy()
@@ -199,8 +211,8 @@ def cond_av(S, T, smin=None, smax=None, Sref=None, prominence=None, delta=None, 
     
     
     print("conditional events:{}".format(len(peaks)), flush=True)
-    #if badcount > 0:
-    #    print("bursts where the recorded peak is not the largest:" + str(badcount))
+    if badcount > 0:
+        print("bursts where the recorded peak is not the largest:" + str(badcount))
 
 
     return Svals, s_av, s_var, t_av, peaks, wait, prominences
