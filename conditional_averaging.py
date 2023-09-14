@@ -211,8 +211,8 @@ def cond_av(S, T, smin=None, smax=None, Sref=None, prominence=None, delta=None, 
     
     
     print("conditional events:{}".format(len(peaks)), flush=True)
-    if badcount > 0:
-        print("bursts where the recorded peak is not the largest:" + str(badcount))
+    if discard_small and badcount > 0:       
+        print(f"Removed bursts where the recorded peak was not the largest:{badcount}.")
 
 
     return Svals, s_av, s_var, t_av, peaks, wait, prominences
