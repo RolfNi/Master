@@ -1,7 +1,7 @@
-def cond_av(S, T, smin=None, smax=None, Sref=None, delta=None, window=False, 
-            prominence=None, threshold = None, weight='amplitude'):
+def cond_av(S, T, smin=None, smax=None, Sref=None, prominence=None, delta=None, overlap=True, discard_small = False,
+             vspace = None, weight='amplitude'):
     """
-    Use: cond_av(S, T, smin, smax=None, Sref=None, delta=None, window=False)
+    Use: cond_av(S, T, smin, smax=None, Sref=None, delta=None, overlap=True)
     Use the level crossing algorithm to compute the conditional average of
     a process.
     Inputs:
@@ -15,38 +15,48 @@ def cond_av(S, T, smin=None, smax=None, Sref=None, delta=None, window=False,
         Sref: Reference signal.
               If None, S is the reference. ................ (1xN) np array,
                                                             def None
-        delta: The size of the conditionally averaged signal. If window = True,
+        delta: The size of the conditionally averaged signal. If overlap = False,
                it is also the minimal distance between two peaks.
                If delta = None, it is estimated as
                delta = len(S)/(number of conditional events)*timestep.
                ............................................ float, def None
-        window: If True, delta also gives the minimal distance between peaks.
-                ........................................... bool, def False
+        overlap: Overlapping of averaging windows. If False, windows are not
+                 allowed to overlap, no part of the signal is included multiple
+                 times and delta also gives the minimal distance between peaks.
+                ........................................... bool, def True
+        discard_small: If True, peaks where another part of the signal, within
+                        one delta of the peak, is larger that the peak itself are
+                        discarded.......................... bool, def False
         prominence: Minimal peak prominence in units
                     of rms-value above mean value.......... Either a number, 
                     None, an array matching x or a 2-element sequence of the 
                     former. The first element is always interpreted as the 
                     minimal and the second, if supplied, as the maximal required 
                     prominence. def None
-        threshold: Required threshold of peaks, the vertical distance to its 
+        vspace: Required vertcal height of peaks, the vertical distance to its 
                    neighboring samples. ................... Either a number, 
                    None, an array matching x or a 2-element sequence of the 
                    former. The first element is always interpreted as the 
                    minimal and the second, if supplied, as the maximal required
-                   threshold.  def None
+                   threshold. ............................. def None
         weight: Weighting to be used in the conditionally averaged signal. If
                 weight='amplitude' the amplitudes of each peak decides its 
                 weight in the average. If weight='equal' all peaks are 
-                weighted equally in the average............ str, def 'amplitude'
+                normalized by either peak height or prominence before averaging
+                ........................................... str, def 'amplitude'
     Outputs:
         Svals: Signal values used in the conditional average.
                S with unused values set to nan. ........... (1xN) np array
-        s_av: conditionally averaged signal ............... np array
-        s_var: conditional variance of events ............. np array
-        t_av: time base of s_av ........................... np array
-        peaks: max amplitudes of conditionally averaged events
-        wait: waiting times between peaks
+        s_av: Conditionally averaged signal ............... np array
+        s_var: Conditional variance of events ............. np array
+        t_av: Time base of s_av ........................... np array
+        peaks: Max amplitudes of conditionally averaged events.
+        ................................................... np array
+        prominences: Prominence values of conditionally averaged events
+        ................................................... np array
+        wait: Waiting times between peaks. ................ np array
     """
+    
     import numpy as np
     from scipy.signal import find_peaks, peak_prominences
     
@@ -77,16 +87,15 @@ def cond_av(S, T, smin=None, smax=None, Sref=None, delta=None, window=False,
     
     distance = None
     # Ensure distance delta between peaks.
-    if window:
-        distance = int(delta / dt)
-        
-    
+    if not overlap:
+        distance = int(delta / dt)   
+     
     
     # Find peak indices.
     gpl_array, properties = find_peaks(sgnl, height = [smin, smax], distance = distance,
-                              prominence = prominence, threshold = threshold)
+                              prominence = prominence, threshold = vspace)
     
-    if not prominence and not window:
+    if not prominence and overlap:
         places = np.where(sgnl > smin)[0]
         if smax:
             higher = np.where(sgnl<smax)[0]
@@ -110,45 +119,75 @@ def cond_av(S, T, smin=None, smax=None, Sref=None, delta=None, window=False,
     # Use arange instead of linspace to guarantee 0 in the middle of the array.
     t_av = np.arange(-int(delta / (dt * 2)), int(delta / (dt * 2)) + 1) * dt
 
-    
-    peaks = S[gpl_array]
+    # For use in the individual normalizations.
     prominences = peak_prominences(S, gpl_array)[0]
-    wait = np.append(np.array([T[0]]), T[gpl_array])
-    wait = np.diff(wait)
 
     Svals = np.zeros(len(sgnl))
     Svals[:] = np.nan
 
     badcount = 0
+    gpl_array= gpl_array.astype(float)
 
     t_half_len = int((len(t_av) - 1) / 2)
     s_tmp = np.zeros([len(t_av), len(gpl_array)])
+    
 
+
+    # Taking equally sized signal excerpts around every peak and storing them in an array.
     for i, global_peak_loc in enumerate(gpl_array):
 
         # Find the average values and their variance
         low_ind = int(max(0, global_peak_loc - t_half_len))
         high_ind = int(min(len(sgnl), global_peak_loc + t_half_len + 1))
-        tmp_sn = S[low_ind:high_ind]
-        Svals[low_ind:high_ind] = S[low_ind:high_ind]
+        tmp_sn = S[low_ind:high_ind].copy()
+        
         if low_ind == 0:
-            tmp_sn = np.append(np.zeros(-global_peak_loc + t_half_len), tmp_sn)
+            tmp_sn = np.append(np.zeros(-int(global_peak_loc) + t_half_len), tmp_sn)
         if high_ind == len(S):
             tmp_sn = np.append(
-                tmp_sn, np.zeros(global_peak_loc + t_half_len + 1 - len(S))
+                tmp_sn, np.zeros(int(global_peak_loc) + t_half_len + 1 - len(S))
             )
+            
+        # If discard_small=True only peak values which are the max value within one delta of
+        # the peak location are included in the average.
         if tmp_sn.max() != tmp_sn[t_half_len]:
+            if discard_small:
+                tmp_sn[:] = np.nan
+                gpl_array[i] = np.nan
+            
             badcount += 1
         
-        s_tmp[:, i] = tmp_sn
-        if weight == 'equal':
+        if not np.isnan(gpl_array[i]):
+            Svals[low_ind:high_ind] = S[low_ind:high_ind].copy()
+            
+            
+        
+        s_tmp[:, i] = tmp_sn 
+        
+        # Normalizing each conditional event by its peak or prominence value. If both threshold
+        # conditions are used the peak value is the normalizing factor.
+        if weight == 'equal' and not np.isnan(tmp_sn.min()):
             if smin is None:
                 s_tmp[:, i] /= prominences[i]
-                s_tmp[:, i] += (1-s_tmp[t_half_len, i])
+                s_tmp[:, i] += (1 - s_tmp[t_half_len, i])
                 
             else:
                 s_tmp[:, i] /= tmp_sn[t_half_len]
-    s_av = np.mean(s_tmp, axis=1)
+                
+        
+                
+    # Removing NaNs from the peak indicies array which stems from the discard_small=True condition.
+    gpl_array = gpl_array[~np.isnan(gpl_array)].astype(int)
+    
+    # The peak values, prominence values and waiting times for each peak.
+    peaks = S[gpl_array]
+    prominences = peak_prominences(S, gpl_array)[0]
+    wait = np.append(np.array([T[0]]), T[gpl_array])
+    wait = np.diff(wait)
+                
+    # The average of all signal excerpts. Referred to as the conditionally averaged signal or the
+    # conditionally averaged waveform.
+    s_av = np.nanmean(s_tmp, axis=1)
 
     # The conditional variance of the conditional event f(t) is defined as
     # CV = <(f-<f>)^2>/<f^2> = 1 - <f>^2/<f^2>
@@ -156,10 +195,12 @@ def cond_av(S, T, smin=None, smax=None, Sref=None, delta=None, window=False,
     # For a highly reproducible signal, f~<f> and CV = 0.
     # For a completely random signal, <f^2> >> <f>^2 and CV = 1.
     # OBS: We return 1-CV = <f>^2/<f^2>.
-    s_var = s_av ** 2 / np.mean(s_tmp ** 2, axis=1)
+    s_var = s_av ** 2 / np.nanmean(s_tmp ** 2, axis=1)
+    
+    
     print("conditional events:{}".format(len(peaks)), flush=True)
-    if badcount > 0:
-        print("bursts where the recorded peak is not the largest:" + str(badcount))
+    #if badcount > 0:
+    #    print("bursts where the recorded peak is not the largest:" + str(badcount))
 
 
     return Svals, s_av, s_var, t_av, peaks, wait, prominences
